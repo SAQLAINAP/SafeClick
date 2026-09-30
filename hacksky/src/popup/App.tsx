@@ -2,8 +2,8 @@ import React, { useState, useEffect } from "react";
 
 // Helper to call Gemini AI API
 async function validateWithGemini(text: string, images: string[]): Promise<any> {
-  // Replace with your Gemini API endpoint and key
-  const apiKey = "AIzaSyDjD8nmMVP5rLw-20D56v6i0_H9nDVjOtM";
+  // Never commit a real key. Paste your own locally and keep it out of git.
+  const apiKey = "YOUR_GEMINI_API_KEY";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
   const prompt = `Analyze the following web page content for AI-generated text, images, and fact-check the claims.\n\nContent:\n${text}\n\nImages: ${images.join(", ")}`;
   const body = {
