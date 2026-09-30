@@ -25,7 +25,6 @@ A sophisticated Chrome extension that proactively identifies and disrupts AI-gen
 hacksky1/
 ├── src/
 │   ├── popup/           # Extension popup UI (scan, results, settings)
-│   ├── components/      # Reusable UI pieces
 │   └── lib/             # Gemini client + utilities
 ├── public/
 │   └── manifest.json    # Extension manifest (copied into dist/)

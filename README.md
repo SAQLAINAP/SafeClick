@@ -37,10 +37,11 @@ npm run build
 
 ## Repo layout
 
-| Folder | What it is |
+| Path | What it is |
 |---|---|
-| [`hacksky1/`](hacksky1) | The current extension (React + TypeScript + Tailwind, built with Vite). See its [README](hacksky1/README.md). |
-| [`hacksky/`](hacksky) | The first prototype (webpack). Kept for reference; not maintained. |
+| [`hacksky1/`](hacksky1) | The extension (React + TypeScript + Tailwind, built with Vite). See its [README](hacksky1/README.md). |
+| [`hacksky1/demo.html`](hacksky1/demo.html) | A sample page to try scans on. |
+| [`docs/screenshots/`](docs/screenshots) | Screenshots used in this README. |
 
 ## License
 
