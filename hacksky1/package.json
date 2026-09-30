@@ -1,6 +1,6 @@
 {
   "name": "hacksky-ai-detector",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "AI-powered threat interception system for detecting fake content and honeytraps",
   "main": "index.js",
   "scripts": {

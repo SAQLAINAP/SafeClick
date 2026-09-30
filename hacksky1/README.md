@@ -24,13 +24,12 @@ A sophisticated Chrome extension that proactively identifies and disrupts AI-gen
 ```
 hacksky1/
 ├── src/
-│   ├── popup/           # Extension popup UI
-│   ├── background/      # Service worker
-│   ├── content/         # Content scripts
-│   └── lib/            # Utility functions
-├── public/             # Static assets
-├── dist/              # Build output
-└── manifest.json      # Extension manifest
+│   ├── popup/           # Extension popup UI (scan, results, settings)
+│   ├── components/      # Reusable UI pieces
+│   └── lib/             # Gemini client + utilities
+├── public/
+│   └── manifest.json    # Extension manifest (copied into dist/)
+└── dist/                # Build output — load this folder in Chrome
 ```
 
 ## Development
@@ -67,6 +66,13 @@ npm run build
 3. Enable "Developer mode"
 4. Click "Load unpacked" and select the `dist` folder
 
+### Gemini API Key
+
+Scans are powered by Google Gemini (`gemini-2.5-flash`, set in `src/lib/gemini.ts`).
+Get a free key at [aistudio.google.com](https://aistudio.google.com/apikey), open the
+extension's **Settings** tab, paste it and click **Save Key**. The key is stored only in
+your browser (`chrome.storage.local`) — never commit a key to this repo.
+
 ## Usage
 
 1. **Install the Extension**: Load the extension in Chrome
@@ -93,9 +99,8 @@ npm run build
 - **High Risk**: Strong evidence of AI generation or fake news
 
 ### Settings
+- **Gemini API Key**: Your own key, stored locally
 - **Theme Toggle**: Switch between light and dark themes
-- **Auto Scan**: Automatically scan pages on load
-- **Notifications**: Enable/disable alerts
 
 ## Contributing
 
@@ -120,10 +125,10 @@ MIT License - see LICENSE file for details
 ## Security
 
 This extension:
-- Only reads page content for analysis
-- Does not collect personal data
-- Does not track user browsing history
-- All analysis is performed locally or through secure APIs
+- Reads a page only when you click **Scan Page** (via `activeTab` — no content script runs on every site)
+- Never modifies the page it scans
+- Sends the page's visible text to Google Gemini for analysis, and nothing else
+- Does not track your browsing history
 
 ## Support
 

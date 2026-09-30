@@ -1,22 +1,33 @@
 import React, { useState, useEffect } from 'react'
-import { Shield, AlertTriangle, CheckCircle, Info, Moon, Sun, Settings, Zap, Eye, BarChart3 } from 'lucide-react'
+import { Shield, AlertTriangle, CheckCircle, Info, Moon, Sun, Settings, Zap, Eye, BarChart3, KeyRound } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { analyzeWithGemini, type PageAnalysis, type PageContent } from '@/lib/gemini'
 
-interface ScanResult {
-  id: string
-  type: 'ai-generated' | 'fake-news' | 'suspicious' | 'safe'
-  confidence: number
-  description: string
-  timestamp: Date
+const FINDING_LABELS: Record<string, string> = {
+  'ai-generated': 'AI Generated',
+  'fake-news': 'Fake News',
+  suspicious: 'Suspicious',
+  safe: 'Looks Genuine',
 }
 
-interface PageAnalysis {
-  url: string
-  title: string
-  aiScore: number
-  fakeNewsScore: number
-  overallRisk: 'low' | 'medium' | 'high'
-  results: ScanResult[]
+interface Stats {
+  pagesScanned: number
+  threatsDetected: number
+}
+
+// Runs inside the target page via chrome.scripting, so it must be self-contained.
+// Reads innerText (already excludes scripts, styles and hidden elements) and never mutates the page.
+function extractPageContent(): PageContent {
+  const selectors = ['article', 'main', '[role="main"]', '.post-content', '.entry-content', '.content']
+  const root =
+    selectors
+      .map((s) => document.querySelector<HTMLElement>(s))
+      .find((el) => el && el.innerText.trim().length > 200) || document.body
+  return {
+    title: document.title || '',
+    url: location.href,
+    text: root.innerText.replace(/\s+/g, ' ').trim().slice(0, 15000),
+  }
 }
 
 const App: React.FC = () => {
@@ -24,55 +35,72 @@ const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<'overview' | 'analysis' | 'settings'>('overview')
   const [isScanning, setIsScanning] = useState(false)
   const [analysis, setAnalysis] = useState<PageAnalysis | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [apiKey, setApiKey] = useState('')
+  const [keySaved, setKeySaved] = useState(false)
+  const [stats, setStats] = useState<Stats>({ pagesScanned: 0, threatsDetected: 0 })
 
   useEffect(() => {
-    // Load theme preference from storage
-    chrome.storage.local.get(['theme'], (result) => {
+    chrome.storage.local.get(['theme', 'apiKey', 'pagesScanned', 'threatsDetected'], (result) => {
       setIsDark(result.theme === 'dark')
+      setApiKey(result.apiKey || '')
+      setStats({ pagesScanned: result.pagesScanned || 0, threatsDetected: result.threatsDetected || 0 })
     })
+  }, [])
 
-    // Apply theme to document
+  useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark)
   }, [isDark])
 
   const toggleTheme = () => {
     const newTheme = !isDark
     setIsDark(newTheme)
-    document.documentElement.classList.toggle('dark', newTheme)
     chrome.storage.local.set({ theme: newTheme ? 'dark' : 'light' })
   }
 
+  const saveApiKey = () => {
+    chrome.storage.local.set({ apiKey: apiKey.trim() }, () => {
+      setKeySaved(true)
+      setTimeout(() => setKeySaved(false), 2000)
+    })
+  }
+
   const scanCurrentPage = async () => {
+    setError(null)
+    if (!apiKey.trim()) {
+      setError('Add your Gemini API key in Settings first.')
+      setCurrentTab('settings')
+      return
+    }
+
     setIsScanning(true)
-    
-    // Simulate scanning process
-    setTimeout(() => {
-      const mockAnalysis: PageAnalysis = {
-        url: 'https://example.com',
-        title: 'Example News Article',
-        aiScore: 75,
-        fakeNewsScore: 60,
-        overallRisk: 'medium',
-        results: [
-          {
-            id: '1',
-            type: 'ai-generated',
-            confidence: 85,
-            description: 'Text patterns suggest AI-generated content',
-            timestamp: new Date()
-          },
-          {
-            id: '2',
-            type: 'fake-news',
-            confidence: 70,
-            description: 'Claims lack credible sources',
-            timestamp: new Date()
-          }
-        ]
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      if (!tab?.id) throw new Error('No active tab found.')
+
+      let content: PageContent | undefined
+      try {
+        const [injection] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: extractPageContent })
+        content = injection?.result as PageContent | undefined
+      } catch {
+        throw new Error("This page can't be scanned (browser pages and the Chrome Web Store are blocked).")
       }
-      setAnalysis(mockAnalysis)
+      if (!content || content.text.length < 50) throw new Error('Not enough text on this page to analyze.')
+
+      const result = await analyzeWithGemini(content, apiKey.trim())
+      setAnalysis(result)
+
+      const next: Stats = {
+        pagesScanned: stats.pagesScanned + 1,
+        threatsDetected: stats.threatsDetected + (result.overallRisk === 'low' ? 0 : 1),
+      }
+      setStats(next)
+      chrome.storage.local.set(next)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Scan failed.')
+    } finally {
       setIsScanning(false)
-    }, 2000)
+    }
   }
 
   const getRiskColor = (risk: string) => {
@@ -151,6 +179,12 @@ const App: React.FC = () => {
 
       {/* Content */}
       <div className="p-4 overflow-y-auto h-[480px]">
+        {error && (
+          <div className="mb-4 p-3 rounded-lg bg-danger-50 dark:bg-danger-900/20 text-sm text-danger-700 dark:text-danger-400">
+            {error}
+          </div>
+        )}
+
         {currentTab === 'overview' && (
           <div className="space-y-4">
             <div className="card p-4">
@@ -159,13 +193,13 @@ const App: React.FC = () => {
                 <button
                   onClick={scanCurrentPage}
                   disabled={isScanning}
-                  className="btn-primary flex items-center space-x-2"
+                  className="btn-primary flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Zap className="w-4 h-4" />
                   {isScanning ? 'Scanning...' : 'Scan Page'}
                 </button>
               </div>
-              
+
               {analysis ? (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
@@ -177,17 +211,21 @@ const App: React.FC = () => {
                       </span>
                     </div>
                   </div>
-                  
+
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="text-center p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                    <div className="text-center p-3 bg-gray-50 dark:bg-gray-900/60 rounded-lg">
                       <div className="text-2xl font-bold text-primary-600">{analysis.aiScore}%</div>
                       <div className="text-xs text-gray-600 dark:text-gray-400">AI Generated</div>
                     </div>
-                    <div className="text-center p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                    <div className="text-center p-3 bg-gray-50 dark:bg-gray-900/60 rounded-lg">
                       <div className="text-2xl font-bold text-warning-600">{analysis.fakeNewsScore}%</div>
                       <div className="text-xs text-gray-600 dark:text-gray-400">Fake News</div>
                     </div>
                   </div>
+
+                  {analysis.summary && (
+                    <p className="text-sm text-gray-600 dark:text-gray-400">{analysis.summary}</p>
+                  )}
                 </div>
               ) : (
                 <div className="text-center py-8 text-gray-500 dark:text-gray-400">
@@ -201,11 +239,11 @@ const App: React.FC = () => {
               <h3 className="text-lg font-semibold mb-3">Quick Stats</h3>
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-success-600">24</div>
+                  <div className="text-2xl font-bold text-success-600">{stats.pagesScanned}</div>
                   <div className="text-gray-600 dark:text-gray-400">Pages Scanned</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-danger-600">3</div>
+                  <div className="text-2xl font-bold text-danger-600">{stats.threatsDetected}</div>
                   <div className="text-gray-600 dark:text-gray-400">Threats Detected</div>
                 </div>
               </div>
@@ -213,29 +251,57 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {currentTab === 'analysis' && analysis && (
+        {currentTab === 'analysis' && (
           <div className="space-y-4">
-            <div className="card p-4">
-              <h3 className="text-lg font-semibold mb-3">Detailed Analysis</h3>
-              <div className="space-y-3">
-                {analysis.results.map((result) => (
-                  <div key={result.id} className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-medium capitalize">{result.type.replace('-', ' ')}</span>
-                      <span className="text-sm text-gray-600 dark:text-gray-400">
-                        {result.confidence}% confidence
-                      </span>
+            {analysis ? (
+              <div className="card p-4">
+                <h3 className="text-lg font-semibold mb-1">Detailed Analysis</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mb-3 truncate">{analysis.title || analysis.url}</p>
+                <div className="space-y-3">
+                  {analysis.results.map((result, idx) => (
+                    <div key={idx} className="p-3 bg-gray-50 dark:bg-gray-900/60 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-medium">{FINDING_LABELS[result.type] ?? result.type}</span>
+                        <span className="text-sm text-gray-600 dark:text-gray-400">
+                          {result.confidence}% confidence
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">{result.description}</p>
                     </div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">{result.description}</p>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                <BarChart3 className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                <p>Scan a page to see the detailed findings here</p>
+              </div>
+            )}
           </div>
         )}
 
         {currentTab === 'settings' && (
           <div className="space-y-4">
+            <div className="card p-4">
+              <h3 className="text-lg font-semibold mb-3 flex items-center">
+                <KeyRound className="w-4 h-4 mr-2" />
+                Gemini API Key
+              </h3>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="Paste your key from aistudio.google.com"
+                className="input mb-3"
+              />
+              <button onClick={saveApiKey} className="btn-primary w-full">
+                {keySaved ? 'Saved' : 'Save Key'}
+              </button>
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                Stored only in this browser. Page text is sent to Google Gemini only when you click Scan.
+              </p>
+            </div>
+
             <div className="card p-4">
               <h3 className="text-lg font-semibold mb-3">Preferences</h3>
               <div className="space-y-3">
@@ -263,7 +329,7 @@ const App: React.FC = () => {
               <h3 className="text-lg font-semibold mb-3">About</h3>
               <p className="text-sm text-gray-600 dark:text-gray-400">
                 HackSky AI Detector helps you identify AI-generated content and potential fake news threats.
-                Stay safe online with our advanced detection algorithms.
+                Results come from an AI model and can be wrong, so treat them as a signal, not a verdict.
               </p>
             </div>
           </div>
@@ -273,4 +339,4 @@ const App: React.FC = () => {
   )
 }
 
-export default App 
+export default App
